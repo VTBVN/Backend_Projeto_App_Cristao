@@ -1,0 +1,27 @@
+# Segredos e configuração local
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python e resultados locais
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Uploads, dados de execução e configurações pessoais do Obsidian
+instance/
+uploads/
+docs/.obsidian/
+
+# Ferramentas e notas de trabalho locais
+/AGENTS.md
+/.agents/
+/docs/agente.md
+/docs/conhecimento/
