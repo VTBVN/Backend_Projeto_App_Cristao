@@ -1,6 +1,7 @@
 # Documento de Escopo e Requisitos do Projeto
 
-**Versão:** 1.0  
+**Versão:** 1.1
+
 **Data:** 19/10/2026  
 **Status:** proposta de referência para validação pelo grupo e pelo professor  
 **Meta acadêmica:** atender aos critérios de A+, sujeito à avaliação docente.
@@ -132,7 +133,7 @@ As contribuições individuais, coautorias quando aplicáveis e avaliações por
 
 **Após concluir o núcleo:** salvar vídeos, seguir criadores, aba “Seguindo”, escolha de interesses e compartilhamento por link.
 
-**Fora desta entrega:** login Google/Apple, gravação pela câmera, aplicativos nativos, transcodificação e streaming adaptativo, IA de moderação, recomendação por aprendizado de máquina, notificações push, lives, duetos, mensagens diretas, monetização, selos institucionais e área infantil.
+**Fora desta entrega:** login Google/Apple, gravação pela câmera, aplicativos nativos, transcodificação e streaming adaptativo, moderação automática, recomendação personalizada avançada, notificações push, lives, duetos, mensagens diretas, monetização, selos institucionais e área infantil.
 
 Os diferenciais do MVP são a reação “Amém” e o versículo vinculado. “Orar por isso” fica para evolução posterior.
 
@@ -155,7 +156,9 @@ Navegador → React → /api → Flask → MongoDB Atlas
 
 Para o piloto acadêmico, os MP4 podem ficar em diretório persistente na EC2, com limite de tamanho, nomes gerados pelo servidor e validação de formato. O diretório não deve permitir execução de arquivos. S3 pode substituir esse armazenamento caso a equipe já domine a configuração.
 
-O objetivo de duração é de até 90 segundos. Só deve ser apresentado como limite garantido após implementação de validação real. Antes disso, aplicar limite de tamanho e usar vídeos previamente preparados. O valor máximo de upload deve ser definido e documentado antes da implementação.
+O limite de duração é de até 90 segundos e só deve ser apresentado como garantido após implementação de validação real. Usar vídeos previamente preparados na demonstração, respeitando os limites técnicos abaixo.
+
+**Refinamento técnico T01 (v1.1):** adotados arquivo de até 50 MiB, requisição de até 51 MiB e duração de até 90 segundos, com validação ffprobe e armazenamento privado persistente na EC2. Esses controles ainda serão implementados. A estratégia de autenticação é sessão opaca no MongoDB, expiração absoluta de 12 horas, revogação no logout e CSRF nas operações mutáveis. Detalhes e justificativas em [arquitetura](arquitetura.md).
 
 ### Integração bíblica
 
@@ -183,6 +186,8 @@ Implementar timeout, cache e tratamento de referência inválida. A documentaç�
 ## 9. Contrato inicial da API
 
 As rotas abaixo são propostas. Detalhar os corpos JSON e respostas antes de implementar; cada operação de negócio deve ter um fluxo correspondente no React.
+
+Entradas, respostas, permissões e rotas de suporte foram detalhadas no [contrato API v0.1](api.md) pela T01. O contrato refina esta lista; não significa que as rotas já estejam implementadas.
 
 | Métodos | Recurso | Uso |
 | --- | --- | --- |
@@ -274,11 +279,12 @@ Concluir cada funcionalidade com backend, interface e verificação antes de ini
 
 - Registrar aprovação do tema e do recorte pelo professor.
 - Confirmar responsáveis e capacidade de execução do grupo.
-- Avaliar o estado atual dos dois repositórios.
-- Fechar estratégia de autenticação, limite de upload e armazenamento persistente.
+- Implementar as decisões de autenticação, limite de upload e armazenamento persistente já fechadas na T01.
 - Validar provedor bíblico e referências em português.
 - Registrar URLs públicas após o deploy.
 
 ## 15. Manutenção
 
 Este arquivo, no backend, é a fonte principal do escopo. O frontend deve apontar para ele em seu README, evitando cópias divergentes. Mudanças de escopo devem atualizar requisitos, critérios de aceite, cronograma e versão deste documento.
+
+**Histórico:** v1.1 (19/10/2026): refinamento técnico T01, contratos e limites definidos; nenhum requisito funcional removido e nenhum critério de aceite marcado sem implementação.
