@@ -1,0 +1,24 @@
+[Unit]
+Description=App Cristao Flask API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=appcristao
+Group=appcristao
+WorkingDirectory=/srv/app-cristao/backend
+EnvironmentFile=/etc/app-cristao/backend.env
+Environment=APP_ENV=production
+ExecStart=/srv/app-cristao/backend/.venv/bin/gunicorn --config gunicorn.conf.py wsgi:app
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/app-cristao
+
+[Install]
+WantedBy=multi-user.target
