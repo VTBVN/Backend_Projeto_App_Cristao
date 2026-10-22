@@ -1,6 +1,6 @@
 # Arquitetura e decisões técnicas — T01
 
-**Data:** 19/10/2026. **Estado:** base Flask, consulta bíblica e cache implementados na T03; autenticação, mídia e frontend continuam como decisões para implementação. Veja [operação](operacao.md) para execução e verificação.
+**Data:** 22/10/2026. **Estado:** base Flask, consulta bíblica e cache implementados na T03; sessão anônima/CSRF e cadastro implementados com testes locais isolados. Login/logout, sessão autenticada, mídia, frontend e verificação Atlas continuam pendentes. Veja [operação](operacao.md) para execução e verificação.
 
 ## Stack e organização
 

@@ -2,7 +2,7 @@
 
 ## Estado da entrega
 
-Implementados `GET /api/health` e `GET /api/bible/passages`. As demais rotas do contrato pertencem às próximas tarefas. Nenhum recurso AWS foi criado e não existe URL pública de API nesta entrega.
+Implementados `GET /api/health` e `GET /api/bible/passages`. Também implementados GET `/api/auth/csrf` e POST `/api/users`; login, logout, perfil e React permanecem pendentes. Nenhum recurso AWS foi criado e não existe URL pública de API nesta entrega.
 
 ## Preparar ambiente local
 
@@ -44,7 +44,7 @@ Os testes são offline e não escrevem em banco real. A prova real é opt-in, us
 
 `APP_ENV`, `MONGODB_URI`, `MONGODB_DATABASE`, `BIBLE_API_BASE_URL` (fixa em `https://bible-api.com`), `BIBLE_CONNECT_TIMEOUT_SECONDS`, `BIBLE_READ_TIMEOUT_SECONDS`, `BIBLE_CACHE_TTL_SECONDS` e `MAX_REQUEST_BYTES` são lidas pela factory. Sem URI e fora de produção, o cache usa SQLite em `instance`.
 
-Tradução é restrita a `almeida`; não aceitar provedor/URL enviados na query. `SESSION_*`, `APP_ORIGIN`, `UPLOAD_*`, `FFPROBE_PATH`, `MAX_VIDEO_*` são contratos para T04/T05; não há autenticação/upload implementados nesta tarefa.
+Tradução é restrita a `almeida`; não aceitar provedor/URL enviados na query. `APP_ORIGIN`, `SESSION_COOKIE_SECURE` e `ANONYMOUS_SESSION_TTL_SECONDS` são consumidos no cadastro. A sessão anônima tem duração absoluta fixa de 1800 segundos. `SESSION_TTL_SECONDS`, `UPLOAD_*`, `FFPROBE_PATH` e `MAX_VIDEO_*` permanecem contratos futuros.
 
 ## Preparação para EC2 (sem provisionamento nesta tarefa)
 
@@ -62,7 +62,7 @@ Os modelos não foram instalados no sistema. Nginx/HTTPS e frontend ainda não e
 2. Backend em `/srv/app-cristao/backend`; criar virtualenv e instalar `requirements.txt`. Executar testes em ambiente separado antes de publicar.
 3. MongoDB Atlas com usuário restrito ao banco do projeto e acesso de rede autorizado para a EC2. Não desabilitar TLS para resolver falhas de conexão.
 4. Criar `/var/lib/app-cristao` pertencente ao usuário do serviço, para uploads futuros. Código permanece separado dos dados persistentes.
-5. Guardar ambiente em `/etc/app-cristao/backend.env`, legível apenas por root/serviço conforme a configuração operacional. Não usar exemplo como credencial real. Configurar `APP_ENV=production`, `MONGODB_URI` real e banco dedicado. `APP_ORIGIN=https://seu-dominio` e cookie Secure serão usados quando T04 for implementada.
+5. Guardar ambiente em `/etc/app-cristao/backend.env`, legível apenas por root/serviço conforme a configuração operacional. Não usar exemplo como credencial real. Configurar `APP_ENV=production`, `MONGODB_URI` real e banco dedicado. `APP_ORIGIN=https://seu-dominio` e `SESSION_COOKIE_SECURE=true`.
 6. Antes de ativar o serviço, carregar o ambiente de modo seguro na sessão operacional e executar `flask --app app init-cache` com o usuário adequado. Não copiar URI em logs, comandos compartilhados ou commits.
 7. Adaptar domínio/certificados no exemplo Nginx; publicar build React somente quando existir. Validar com `nginx -t` e `systemd-analyze verify` no servidor, após os caminhos estarem instalados. O redirecionamento HTTP exige certificado previamente provisionado; este modelo não automatiza sua emissão.
 8. Instalar unidade, recarregar systemd e iniciar somente após validação. Verificar health, uma passagem real e a segunda consulta em cache. Confirmar a coleção no Atlas sem divulgar URI. Documentar URL pública no README.
@@ -76,3 +76,19 @@ Os modelos não foram instalados no sistema. Nginx/HTTPS e frontend ainda não e
 - [ ] Frontend implementado/publicado e fluxo completo verificado (T12).
 
 O custo e a autorização de recursos continuam sob controle do usuário; este documento não executa provisionamento. Preparar esses arquivos atende à parte de preparação da T03, sem concluir RA05 ou CA12.
+
+## Cadastro e CSRF — T04.1
+
+Contas e sessões usam somente MongoDB; sem `MONGODB_URI`, as novas rotas retornam 503 controlado (sem fallback SQLite ou memória). Configure a URI fora do Git e execute antes do uso:
+
+```bash
+.venv/bin/flask --app app init-auth
+```
+
+O comando cria índices únicos de e-mail normalizado e hash de sessão, e TTL de sessões; conflitos/dados existentes ou banco inacessível causam falha controlada. Preserve os índices únicos para garantir duplicação inclusive em concorrência.
+
+Fluxo: GET `/api/auth/csrf` → guardar cookie e `data.csrf_token` → POST `/api/users` com JSON `name`, `email`, `password` e cabeçalho `X-CSRF-Token`. Cadastro retorna 201, sem autenticar a sessão. Uma nova consulta CSRF rotaciona o token e preserva o prazo absoluto da sessão existente. Sessões armazenam somente hashes dos tokens; senhas usam scrypt.
+
+`APP_ORIGIN` é a origem exata do cliente, sem caminho ou barra final. Requisições com Origin divergente são recusadas nas duas rotas; clientes sem Origin ainda precisam de cookie e CSRF no cadastro. Cookies são Secure por padrão; `SESSION_COOKIE_SECURE=false` só é aceito em testes ou `APP_ENV=development` com origem localhost HTTP. Desenvolvimento com Vite deve encaminhar `/api` ao Flask na mesma origem; não há CORS público.
+
+Testes usam repositório fake injetado e adaptador Mongo simulado, sem rede ou dados reais. Não comprovam persistência no Atlas, concorrência real no banco, login ou integração React.

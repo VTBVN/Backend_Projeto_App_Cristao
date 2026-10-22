@@ -1,6 +1,6 @@
-# Contrato da API — v0.2
+# Contrato da API — v0.3
 
-**Data:** 19/10/2026. **Estado:** `/api/health` e `/api/bible/passages` implementadas e verificadas na T03. As demais rotas são contratos para tarefas futuras. Referência: [arquitetura](arquitetura.md) e RF01–RF13 do [escopo](escopo-e-requisitos.md).
+**Data:** 22/10/2026. **Estado:** `/api/health` e `/api/bible/passages` implementadas e verificadas na T03. GET `/api/auth/csrf` e POST `/api/users` implementadas na primeira fatia de cadastro, com verificação local isolada; integração Atlas pendente. As demais rotas são contratos para tarefas futuras. Referência: [arquitetura](arquitetura.md) e RF01–RF13 do [escopo](escopo-e-requisitos.md).
 
 ## Convenções
 
@@ -43,6 +43,12 @@ Coleções internas não definem diretamente o JSON público. Autor e administra
 Validações: nome 2–80 caracteres após trim; bio até 300; e-mail obrigatório, até 254 caracteres, normalizado com trim/lowercase e índice único; senha entre 12 e 128 caracteres, sem trim ou truncamento. Senha deve ser tratada como string; e-mail não aceita objetos ou operadores de consulta. E-mail duplicado: 409. Cadastro não aceita `role`; falha de login retorna mensagem genérica e 401. Editar e-mail/senha não faz parte deste contrato.
 
 Fluxo React: obter CSRF → cadastrar → fazer login → atualizar token em memória → GET `/me`. Ao reabrir a página, obter CSRF e consultar `/me`. Logout limpa estado React após resposta; erro de rede não comprova revogação, portanto informar falha e permitir tentar novamente. Não guardar senha nem identificador de sessão no localStorage.
+
+### Estado da primeira fatia de cadastro
+
+GET `/auth/csrf` e POST `/users` estão implementadas. Cada GET CSRF válido emite um novo token, invalidando o anterior, sem estender a expiração absoluta da sessão anônima de 30 minutos. Outra aba que mantenha token antigo precisará consultar CSRF novamente. Origem divergente de `APP_ORIGIN` é rejeitada nas duas rotas; cliente sem Origin ainda precisa do cookie e token no cadastro. Cadastro não adiciona identidade autenticada à sessão.
+
+Contas e sessões exigem MongoDB e inicialização dos índices por `init-auth`, conforme [operação](operacao.md). Sem configuração ou com persistência indisponível, as rotas novas retornam 503 quando precisam acessar o repositório. Não há armazenamento local alternativo de contas. O campo Location do cadastro já segue o contrato do perfil, mas GET `/users/{id}` ainda não está implementado. Login/logout, perfil, React e prova Atlas permanecem pendentes.
 
 ## 2. Feed, publicação e mídia — RF02–RF05
 
