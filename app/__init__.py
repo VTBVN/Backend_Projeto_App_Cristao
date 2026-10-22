@@ -8,13 +8,18 @@ from werkzeug.exceptions import HTTPException
 
 from app.bible import BibleService
 from app.cache import MongoCache, SQLiteCache
-from app.errors import ApiError, CacheUnavailable
+from app.errors import ApiError, CacheUnavailable, AuthUnavailable
+from app.auth import auth, configure_auth
+from app.auth_repository import MongoAuthRepository, UnavailableAuthRepository
 
 
 def create_app(config=None):
     app = Flask(__name__, instance_relative_config=True, static_folder=None)
     app.config.from_mapping(
         APP_ENV=os.getenv("APP_ENV", "development"),
+        APP_ORIGIN=os.getenv("APP_ORIGIN", "http://localhost:5173"),
+        SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "true").lower() == "true",
+        ANONYMOUS_SESSION_TTL_SECONDS=int(os.getenv("ANONYMOUS_SESSION_TTL_SECONDS", "1800")),
         MONGODB_URI=os.getenv("MONGODB_URI", ""),
         MONGODB_DATABASE=os.getenv("MONGODB_DATABASE", "app_cristao_dev"),
         BIBLE_API_BASE_URL=os.getenv("BIBLE_API_BASE_URL", "https://bible-api.com"),
@@ -33,12 +38,21 @@ def create_app(config=None):
             raise ValueError(f"Configuração inválida: {key}.")
     if app.config["APP_ENV"] not in ("development", "production", "testing"):
         raise ValueError("APP_ENV inválido.")
+    configure_auth(app)
+    mongo = None
+    if app.config["MONGODB_URI"]:
+        mongo = MongoClient(app.config["MONGODB_URI"], serverSelectionTimeoutMS=2000,
+                            connectTimeoutMS=2000, socketTimeoutMS=2000, tz_aware=True)
+        app.extensions["mongo"] = mongo
+    repository = app.config.get("AUTH_REPOSITORY")
+    if repository is None:
+        repository = (MongoAuthRepository(mongo[app.config["MONGODB_DATABASE"]])
+                      if mongo is not None else UnavailableAuthRepository())
+    app.extensions["auth_repository"] = repository
+    app.register_blueprint(auth)
     cache = app.config.get("BIBLE_CACHE")
     if cache is None:
         if app.config["MONGODB_URI"]:
-            mongo = MongoClient(app.config["MONGODB_URI"], serverSelectionTimeoutMS=2000,
-                                connectTimeoutMS=2000, socketTimeoutMS=2000, tz_aware=True)
-            app.extensions["mongo"] = mongo
             cache = MongoCache(mongo[app.config["MONGODB_DATABASE"]]["bible_cache"])
         elif app.config["APP_ENV"] == "production":
             raise ValueError("Produção exige MONGODB_URI; não há fallback para SQLite.")
@@ -67,6 +81,10 @@ def create_app(config=None):
     def api_error(error):
         return jsonify(error={"code": error.code, "message": error.message}), error.status
 
+    @app.errorhandler(AuthUnavailable)
+    def auth_unavailable(error):
+        return jsonify(error={"code": "auth_unavailable", "message": "Cadastro indisponível."}), 503
+
     @app.errorhandler(HTTPException)
     def http_error(error):
         response = error.get_response()
@@ -93,5 +111,14 @@ def create_app(config=None):
         except CacheUnavailable:
             raise click.ClickException("Cache indisponível; confira a configuração e a rede.") from None
         click.echo(f"Cache inicializado: {type(cache).__name__}.")
+
+    @app.cli.command("init-auth")
+    def init_auth():
+        """Initialize account and session indexes explicitly."""
+        try:
+            repository.initialize()
+        except AuthUnavailable:
+            raise click.ClickException("Autenticação indisponível; confira configuração e rede.") from None
+        click.echo("Índices de usuários e sessões inicializados.")
 
     return app

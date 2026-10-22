@@ -10,3 +10,11 @@ class ApiError(Exception):
 
 class CacheUnavailable(Exception):
     pass
+
+
+class AuthUnavailable(Exception):
+    pass
+
+
+class EmailConflict(Exception):
+    pass
