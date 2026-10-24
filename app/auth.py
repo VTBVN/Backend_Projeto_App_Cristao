@@ -1,17 +1,24 @@
-"""Anonymous CSRF sessions and public registration."""
+"""Anonymous CSRF sessions, registration, login/logout and own profile."""
 import hashlib
 import hmac
+import math
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from urllib.parse import urlsplit
 
 from bson import ObjectId
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, Response, current_app, jsonify, request
 from werkzeug.exceptions import BadRequest
-from werkzeug.security import generate_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from app.errors import ApiError, EmailConflict
+
+
+LOGIN_MAX_FAILURES = 10
+LOGIN_WINDOW = timedelta(minutes=15)
+ID_PATTERN = re.compile(r'[0-9a-f]{24}')
 
 
 def digest(value):
@@ -33,6 +40,8 @@ def configure_auth(app):
         raise ValueError('Cookie sem Secure permitido somente em testes ou localhost HTTP.')
     if app.config['ANONYMOUS_SESSION_TTL_SECONDS'] != 1800:
         raise ValueError('Sessão anônima deve durar 1800 segundos.')
+    if app.config['SESSION_TTL_SECONDS'] != 43200:
+        raise ValueError('Sessão autenticada deve durar 43200 segundos.')
 
 
 def now():
@@ -66,19 +75,68 @@ def require_csrf():
     if (session is None or not token or len(token) > 256
             or not hmac.compare_digest(digest(token), session['csrf_hash'])):
         raise ApiError(403, 'csrf_invalid', 'Sessão e token CSRF válidos são obrigatórios.')
+    return session
+
+
+def require_login(session):
+    if session is None or not session.get('user_id'):
+        raise ApiError(401, 'unauthenticated', 'Autenticação necessária.')
+    return session['user_id']
+
+
+def authenticated_user(session):
+    user = repository().find_user_by_id(require_login(session))
+    if user is None:
+        raise ApiError(401, 'unauthenticated', 'Autenticação necessária.')
+    return user
+
+
+def json_payload():
+    try:
+        return request.get_json(silent=False) if request.is_json else None
+    except BadRequest:
+        raise ApiError(400, 'validation_error', 'JSON inválido.') from None
+
+
+def check_strings(values):
+    for value in values:
+        if not isinstance(value, str):
+            raise ApiError(400, 'validation_error', 'Dados inválidos.')
+        try:
+            value.encode('utf-8', errors='strict')
+        except UnicodeEncodeError:
+            raise ApiError(400, 'validation_error', 'Dados inválidos.') from None
+
+
+@lru_cache(maxsize=1)
+def dummy_hash():
+    return generate_password_hash(secrets.token_urlsafe(16), method='scrypt')
+
+
+def iso(value):
+    return value.isoformat().replace('+00:00', 'Z')
+
+
+def user_public(user):
+    return {'id': str(user['_id']), 'name': user['name'], 'bio': user['bio'],
+            'created_at': iso(user['created_at'])}
+
+
+def user_self(user):
+    return {**user_public(user), 'email': user['email_normalized'], 'role': user['role']}
+
+
+def set_session_cookie(response, token, ttl):
+    response.set_cookie('app_session', token, max_age=ttl, httponly=True,
+                        secure=current_app.config['SESSION_COOKIE_SECURE'],
+                        samesite='Lax', path='/')
 
 
 def validate_user(payload):
     if not isinstance(payload, dict) or set(payload) != {'name', 'email', 'password'}:
         raise ApiError(400, 'validation_error', 'Dados inválidos.')
     name, email, password = (payload[key] for key in ('name', 'email', 'password'))
-    if not all(isinstance(value, str) for value in (name, email, password)):
-        raise ApiError(400, 'validation_error', 'Dados inválidos.')
-    try:
-        for value in (name, email, password):
-            value.encode('utf-8', errors='strict')
-    except UnicodeEncodeError:
-        raise ApiError(400, 'validation_error', 'Dados inválidos.') from None
+    check_strings((name, email, password))
     name, email = name.strip(), email.strip().lower()
     local, separator, domain = email.rpartition('@')
     valid_email = (separator and len(local) <= 64 and len(email) <= 254
@@ -111,20 +169,14 @@ def csrf():
         repository().insert_session(session)
     response = jsonify(data={'csrf_token': csrf_token})
     if session_token is not None:
-        response.set_cookie('app_session', session_token, max_age=1800, httponly=True,
-                            secure=current_app.config['SESSION_COOKIE_SECURE'],
-                            samesite='Lax', path='/')
+        set_session_cookie(response, session_token, 1800)
     return response
 
 
 @auth.post('/users')
 def register():
     require_csrf()
-    try:
-        payload = request.get_json(silent=False) if request.is_json else None
-    except BadRequest:
-        raise ApiError(400, 'validation_error', 'JSON inválido.') from None
-    name, email, password = validate_user(payload)
+    name, email, password = validate_user(json_payload())
     user = {'_id': ObjectId(), 'name': name, 'email_normalized': email,
             'password_hash': generate_password_hash(password, method='scrypt'),
             'bio': '', 'role': 'user', 'created_at': now()}
@@ -132,9 +184,83 @@ def register():
         repository().insert_user(user)
     except EmailConflict:
         raise ApiError(409, 'email_conflict', 'E-mail já cadastrado.') from None
-    response = jsonify(data={'id': str(user['_id']), 'name': user['name'], 'email': email,
-                             'bio': '', 'role': 'user',
-                             'created_at': user['created_at'].isoformat().replace('+00:00', 'Z')})
+    response = jsonify(data=user_self(user))
     response.status_code = 201
     response.headers['Location'] = '/api/users/' + str(user['_id'])
     return response
+
+
+@auth.post('/auth/login')
+def login():
+    previous = require_csrf()
+    payload = json_payload()
+    if not isinstance(payload, dict) or set(payload) != {'email', 'password'}:
+        raise ApiError(400, 'validation_error', 'Dados inválidos.')
+    email, password = payload['email'], payload['password']
+    check_strings((email, password))
+    email, at = email.strip().lower(), now()
+    key = digest(f'{request.remote_addr}|{email}')
+    failures = repository().failed_logins(key, at - LOGIN_WINDOW)
+    if len(failures) >= LOGIN_MAX_FAILURES:
+        wait = failures[-LOGIN_MAX_FAILURES] + LOGIN_WINDOW - at
+        raise ApiError(429, 'too_many_attempts', 'Muitas tentativas. Tente novamente mais tarde.',
+                       max(1, math.ceil(wait.total_seconds())))
+    user = repository().find_user_by_email(email) if len(email) <= 254 else None
+    password_ok = len(password) <= 128 and check_password_hash(
+        user['password_hash'] if user else dummy_hash(), password)
+    if user is None or not password_ok:
+        repository().record_failed_login(key, at, at + LOGIN_WINDOW)
+        raise ApiError(401, 'invalid_credentials', 'E-mail ou senha incorretos.')
+    repository().clear_failed_logins(key)
+    ttl = current_app.config['SESSION_TTL_SECONDS']
+    session_token, csrf_token = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+    repository().delete_session(previous['token_hash'])
+    repository().insert_session({'token_hash': digest(session_token), 'user_id': user['_id'],
+                                 'csrf_hash': digest(csrf_token), 'created_at': at,
+                                 'expires_at': at + timedelta(seconds=ttl)})
+    response = jsonify(data={'user': user_self(user), 'csrf_token': csrf_token})
+    set_session_cookie(response, session_token, ttl)
+    return response
+
+
+@auth.post('/auth/logout')
+def logout():
+    session = require_csrf()
+    require_login(session)
+    repository().delete_session(session['token_hash'])
+    response = Response(status=204)
+    response.delete_cookie('app_session', path='/', httponly=True, samesite='Lax',
+                           secure=current_app.config['SESSION_COOKIE_SECURE'])
+    return response
+
+
+@auth.get('/me')
+def me():
+    return jsonify(data=user_self(authenticated_user(read_session(now()))))
+
+
+@auth.patch('/me')
+def update_me():
+    session = require_csrf()
+    user = authenticated_user(session)
+    payload = json_payload()
+    if not isinstance(payload, dict) or not payload or not set(payload) <= {'name', 'bio'}:
+        raise ApiError(400, 'validation_error', 'Dados inválidos.')
+    check_strings(payload.values())
+    fields = {key: value.strip() for key, value in payload.items()}
+    if ('name' in fields and not 2 <= len(fields['name']) <= 80) or len(fields.get('bio', '')) > 300:
+        raise ApiError(400, 'validation_error', 'Dados inválidos.')
+    updated = repository().update_user(user['_id'], fields)
+    if updated is None:
+        raise ApiError(401, 'unauthenticated', 'Autenticação necessária.')
+    return jsonify(data=user_self(updated))
+
+
+@auth.get('/users/<user_id>')
+def public_user(user_id):
+    if not ID_PATTERN.fullmatch(user_id):
+        raise ApiError(400, 'validation_error', 'Identificador inválido.')
+    user = repository().find_user_by_id(ObjectId(user_id))
+    if user is None:
+        raise ApiError(404, 'not_found', 'Usuário não encontrado.')
+    return jsonify(data=user_public(user))

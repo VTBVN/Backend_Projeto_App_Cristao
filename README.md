@@ -3,7 +3,7 @@ Backend do projeto agil e programação eficaz do app cristao
 
 ## Execução — entrega T03
 
-Backend Flask com application factory, `GET /api/health` e `GET /api/bible/passages`. Integração real com bible-api.com em Almeida verificada para João 3:16 e Salmos 23:1. Autenticação, vídeos e demais rotas ainda serão implementados.
+Backend Flask com application factory, `GET /api/health` e `GET /api/bible/passages`. Integração real com bible-api.com em Almeida verificada para João 3:16 e Salmos 23:1. Cadastro, login, logout, perfil (`/api/me`) e perfil público (`/api/users/{id}`) implementados e testados localmente; vídeos e demais rotas ainda serão implementados.
 
 Requer Python 3.12. No diretório deste repositório:
 

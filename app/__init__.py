@@ -20,6 +20,7 @@ def create_app(config=None):
         APP_ORIGIN=os.getenv("APP_ORIGIN", "http://localhost:5173"),
         SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "true").lower() == "true",
         ANONYMOUS_SESSION_TTL_SECONDS=int(os.getenv("ANONYMOUS_SESSION_TTL_SECONDS", "1800")),
+        SESSION_TTL_SECONDS=int(os.getenv("SESSION_TTL_SECONDS", "43200")),
         MONGODB_URI=os.getenv("MONGODB_URI", ""),
         MONGODB_DATABASE=os.getenv("MONGODB_DATABASE", "app_cristao_dev"),
         BIBLE_API_BASE_URL=os.getenv("BIBLE_API_BASE_URL", "https://bible-api.com"),
@@ -79,7 +80,11 @@ def create_app(config=None):
 
     @app.errorhandler(ApiError)
     def api_error(error):
-        return jsonify(error={"code": error.code, "message": error.message}), error.status
+        response = jsonify(error={"code": error.code, "message": error.message})
+        response.status_code = error.status
+        if error.retry_after is not None:
+            response.headers["Retry-After"] = str(error.retry_after)
+        return response
 
     @app.errorhandler(AuthUnavailable)
     def auth_unavailable(error):
