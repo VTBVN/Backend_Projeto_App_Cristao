@@ -1,9 +1,12 @@
 import json
+from copy import deepcopy
+from datetime import datetime, timezone
 
 import pytest
 import requests
 
 from app import create_app
+from app.errors import AuthUnavailable, EmailConflict
 
 
 @pytest.fixture(autouse=True)
@@ -53,3 +56,83 @@ def provider(monkeypatch):
         return calls
 
     return install
+
+
+class FakeAuthRepository:
+    def __init__(self):
+        self.sessions = {}
+        self.users = {}
+        self.attempts = {}
+        self.unavailable = False
+        self.race = False
+
+    def check(self):
+        if self.unavailable:
+            raise AuthUnavailable()
+
+    def initialize(self):
+        self.check()
+
+    def find_session(self, key):
+        self.check()
+        return deepcopy(self.sessions.get(key))
+
+    def insert_session(self, document):
+        self.check()
+        self.sessions[document['token_hash']] = deepcopy(document)
+
+    def rotate_csrf(self, key, csrf_hash, now):
+        self.check()
+        if self.sessions[key]['expires_at'] <= now:
+            return False
+        self.sessions[key]['csrf_hash'] = csrf_hash
+        return True
+
+    def insert_user(self, document):
+        self.check()
+        if self.race or document['email_normalized'] in self.users:
+            raise EmailConflict()
+        self.users[document['email_normalized']] = deepcopy(document)
+        return document
+
+    def find_user_by_email(self, email):
+        self.check()
+        return deepcopy(self.users.get(email))
+
+    def find_user_by_id(self, user_id):
+        self.check()
+        return deepcopy(next((u for u in self.users.values() if u['_id'] == user_id), None))
+
+    def update_user(self, user_id, fields):
+        self.check()
+        user = next((u for u in self.users.values() if u['_id'] == user_id), None)
+        if user is None:
+            return None
+        user.update(fields)
+        return deepcopy(user)
+
+    def delete_session(self, key):
+        self.check()
+        self.sessions.pop(key, None)
+
+    def failed_logins(self, key, since):
+        self.check()
+        return sorted(at for at in self.attempts.get(key, []) if at > since)
+
+    def record_failed_login(self, key, at, expires_at):
+        self.check()
+        self.attempts.setdefault(key, []).append(at)
+
+    def clear_failed_logins(self, key):
+        self.check()
+        self.attempts.pop(key, None)
+
+
+@pytest.fixture
+def setup(tmp_path):
+    repo = FakeAuthRepository()
+    time = [datetime(2026, 10, 22, tzinfo=timezone.utc)]
+    app = create_app({'TESTING': True, 'APP_ENV': 'testing', 'MONGODB_URI': '',
+                      'CACHE_SQLITE_PATH': tmp_path / 'cache', 'AUTH_REPOSITORY': repo,
+                      'AUTH_CLOCK': lambda: time[0], 'SESSION_COOKIE_SECURE': False})
+    return app, app.test_client(), repo, time

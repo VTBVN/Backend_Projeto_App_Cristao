@@ -1,59 +1,11 @@
 from copy import deepcopy
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 import pytest
 from werkzeug.security import check_password_hash
 
 from app import create_app
 from app.auth import digest
-from app.errors import AuthUnavailable, EmailConflict
-
-
-class FakeAuthRepository:
-    def __init__(self):
-        self.sessions = {}
-        self.users = {}
-        self.unavailable = False
-        self.race = False
-
-    def check(self):
-        if self.unavailable:
-            raise AuthUnavailable()
-
-    def initialize(self):
-        self.check()
-
-    def find_session(self, key):
-        self.check()
-        return deepcopy(self.sessions.get(key))
-
-    def insert_session(self, document):
-        self.check()
-        self.sessions[document['token_hash']] = deepcopy(document)
-
-    def rotate_csrf(self, key, csrf_hash, now):
-        self.check()
-        if self.sessions[key]['expires_at'] <= now:
-            return False
-        self.sessions[key]['csrf_hash'] = csrf_hash
-        return True
-
-    def insert_user(self, document):
-        self.check()
-        if self.race or document['email_normalized'] in self.users:
-            raise EmailConflict()
-        self.users[document['email_normalized']] = deepcopy(document)
-        return document
-
-
-@pytest.fixture
-def setup(tmp_path):
-    repo = FakeAuthRepository()
-    time = [datetime(2026, 10, 22, tzinfo=timezone.utc)]
-    app = create_app({'TESTING': True, 'APP_ENV': 'testing', 'MONGODB_URI': '',
-                      'CACHE_SQLITE_PATH': tmp_path / 'cache', 'AUTH_REPOSITORY': repo,
-                      'AUTH_CLOCK': lambda: time[0], 'SESSION_COOKIE_SECURE': False})
-    return app, app.test_client(), repo, time
 
 
 def credentials(client):

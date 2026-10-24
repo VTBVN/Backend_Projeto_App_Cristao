@@ -2,7 +2,7 @@
 
 ## Estado da entrega
 
-Implementados `GET /api/health` e `GET /api/bible/passages`. Também implementados GET `/api/auth/csrf` e POST `/api/users`; login, logout, perfil e React permanecem pendentes. Nenhum recurso AWS foi criado e não existe URL pública de API nesta entrega.
+Implementados `GET /api/health` e `GET /api/bible/passages`. Também implementados GET `/api/auth/csrf`, POST `/api/users`, POST `/api/auth/login`, POST `/api/auth/logout`, GET/PATCH `/api/me` e GET `/api/users/{id}`; React e prova no Atlas permanecem pendentes. Nenhum recurso AWS foi criado e não existe URL pública de API nesta entrega.
 
 ## Preparar ambiente local
 
@@ -85,10 +85,10 @@ Contas e sessões usam somente MongoDB; sem `MONGODB_URI`, as novas rotas retorn
 .venv/bin/flask --app app init-auth
 ```
 
-O comando cria índices únicos de e-mail normalizado e hash de sessão, e TTL de sessões; conflitos/dados existentes ou banco inacessível causam falha controlada. Preserve os índices únicos para garantir duplicação inclusive em concorrência.
+O comando cria índices únicos de e-mail normalizado e hash de sessão, TTL de sessões e índices da coleção `login_attempts` (contador de falhas de login, com TTL); conflitos/dados existentes ou banco inacessível causam falha controlada. Preserve os índices únicos para garantir duplicação inclusive em concorrência.
 
 Fluxo: GET `/api/auth/csrf` → guardar cookie e `data.csrf_token` → POST `/api/users` com JSON `name`, `email`, `password` e cabeçalho `X-CSRF-Token`. Cadastro retorna 201, sem autenticar a sessão. Uma nova consulta CSRF rotaciona o token e preserva o prazo absoluto da sessão existente. Sessões armazenam somente hashes dos tokens; senhas usam scrypt.
 
 `APP_ORIGIN` é a origem exata do cliente, sem caminho ou barra final. Requisições com Origin divergente são recusadas nas duas rotas; clientes sem Origin ainda precisam de cookie e CSRF no cadastro. Cookies são Secure por padrão; `SESSION_COOKIE_SECURE=false` só é aceito em testes ou `APP_ENV=development` com origem localhost HTTP. Desenvolvimento com Vite deve encaminhar `/api` ao Flask na mesma origem; não há CORS público.
 
-Testes usam repositório fake injetado e adaptador Mongo simulado, sem rede ou dados reais. Não comprovam persistência no Atlas, concorrência real no banco, login ou integração React.
+Testes usam repositório fake injetado e adaptador Mongo simulado, sem rede ou dados reais. Não comprovam persistência no Atlas, concorrência real no banco ou integração React. Sessão autenticada dura 12 horas (`SESSION_TTL_SECONDS=43200`, valor fixo validado na inicialização).

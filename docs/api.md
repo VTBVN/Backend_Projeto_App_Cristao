@@ -1,6 +1,6 @@
-# Contrato da API — v0.3
+# Contrato da API — v0.4
 
-**Data:** 22/10/2026. **Estado:** `/api/health` e `/api/bible/passages` implementadas e verificadas na T03. GET `/api/auth/csrf` e POST `/api/users` implementadas na primeira fatia de cadastro, com verificação local isolada; integração Atlas pendente. As demais rotas são contratos para tarefas futuras. Referência: [arquitetura](arquitetura.md) e RF01–RF13 do [escopo](escopo-e-requisitos.md).
+**Data:** 24/10/2026. **Estado:** `/api/health` e `/api/bible/passages` implementadas e verificadas na T03. Autenticação implementada com verificação local isolada: GET `/api/auth/csrf`, POST `/api/users`, POST `/api/auth/login`, POST `/api/auth/logout`, GET/PATCH `/api/me` e GET `/api/users/{id}`; integração Atlas e React pendentes. As demais rotas são contratos para tarefas futuras. Referência: [arquitetura](arquitetura.md) e RF01–RF13 do [escopo](escopo-e-requisitos.md).
 
 ## Convenções
 
@@ -44,11 +44,15 @@ Validações: nome 2–80 caracteres após trim; bio até 300; e-mail obrigatór
 
 Fluxo React: obter CSRF → cadastrar → fazer login → atualizar token em memória → GET `/me`. Ao reabrir a página, obter CSRF e consultar `/me`. Logout limpa estado React após resposta; erro de rede não comprova revogação, portanto informar falha e permitir tentar novamente. Não guardar senha nem identificador de sessão no localStorage.
 
-### Estado da primeira fatia de cadastro
+### Estado da fatia de autenticação
 
-GET `/auth/csrf` e POST `/users` estão implementadas. Cada GET CSRF válido emite um novo token, invalidando o anterior, sem estender a expiração absoluta da sessão anônima de 30 minutos. Outra aba que mantenha token antigo precisará consultar CSRF novamente. Origem divergente de `APP_ORIGIN` é rejeitada nas duas rotas; cliente sem Origin ainda precisa do cookie e token no cadastro. Cadastro não adiciona identidade autenticada à sessão.
+GET `/auth/csrf`, POST `/users`, POST `/auth/login`, POST `/auth/logout`, GET/PATCH `/me` e GET `/users/{id}` estão implementadas. Cada GET CSRF válido emite um novo token, invalidando o anterior, sem estender a expiração absoluta da sessão anônima de 30 minutos. Outra aba que mantenha token antigo precisará consultar CSRF novamente. Origem divergente de `APP_ORIGIN` é rejeitada nas duas rotas; cliente sem Origin ainda precisa do cookie e token no cadastro. Cadastro não adiciona identidade autenticada à sessão.
 
-Contas e sessões exigem MongoDB e inicialização dos índices por `init-auth`, conforme [operação](operacao.md). Sem configuração ou com persistência indisponível, as rotas novas retornam 503 quando precisam acessar o repositório. Não há armazenamento local alternativo de contas. O campo Location do cadastro já segue o contrato do perfil, mas GET `/users/{id}` ainda não está implementado. Login/logout, perfil, React e prova Atlas permanecem pendentes.
+Contas e sessões exigem MongoDB e inicialização dos índices por `init-auth`, conforme [operação](operacao.md). Sem configuração ou com persistência indisponível, as rotas novas retornam 503 quando precisam acessar o repositório. Não há armazenamento local alternativo de contas. Login exige CSRF, aceita somente `email` e `password` (e-mail com trim/lowercase, senha sem alteração) e responde 200 com `data.user` e novo `data.csrf_token`. A sessão anterior (anônima ou não) é apagada e outra é criada com cookie `app_session` de 12 horas, duração absoluta e sem renovação. Falhas retornam 401 `invalid_credentials` com mensagem idêntica para e-mail inexistente e senha incorreta. Após 10 falhas em 15 minutos para a combinação IP/e-mail, o login retorna 429 com `Retry-After`; o contador fica no MongoDB (`login_attempts`, com TTL) e é zerado após sucesso. Atrás do Nginx, `request.remote_addr` é o IP do proxy, então o limite hoje age na prática por e-mail.
+
+Logout exige sessão autenticada e CSRF; apaga a sessão no servidor e expira o cookie (204). Sem login: 401; sem CSRF: 403. `GET /me` não exige CSRF, lê o papel atual no servidor e retorna 401 para sessão ausente, expirada, revogada ou de usuário removido. `PATCH /me` aceita somente `name` (2–80) e/ou `bio` (até 300), com trim; qualquer outro campo, inclusive `email`, `role` e `password`, retorna 400. `GET /users/{id}` é público e retorna somente UserPublic; identificador malformado retorna 400 e inexistente 404.
+
+React e prova Atlas permanecem pendentes.
 
 ## 2. Feed, publicação e mídia — RF02–RF05
 
