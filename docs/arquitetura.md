@@ -41,7 +41,7 @@ O papel atual continua sendo consultado no servidor. Promover uma conta de usuá
 - Cadastro não autentica automaticamente. Login invalida a sessão anterior daquele navegador, gera outra e retorna novo CSRF. Logout exclui a sessão no servidor e expira o cookie. Sessão revogada ou expirada retorna 401 em rotas autenticadas, inclusive se o cliente reutilizar cookie antigo; falha de CSRF continua retornando 403. A revogação impede novas requisições autenticadas, sem desfazer operações já autorizadas.
 - Hash de senha com `generate_password_hash` do Werkzeug, usando scrypt, e verificação pela função correspondente; senha nunca é registrada em log ou devolvida.
 - Papel padrão `user`; `admin` só por comando operacional autenticado no ambiente do servidor, fora do cadastro público. Ler papel atual do usuário no servidor, não confiar em campos do cliente.
-- Limitar tentativas de login: inicialmente 10 por combinação IP/e-mail em 15 minutos; resposta 429 e Retry-After. Implementar contador compartilhado entre workers, não apenas memória de processo. Mensagem de falha não distingue usuário inexistente de senha incorreta.
+- Proteção de login implementada: reservar atomicamente até 10 tentativas por combinação IP/e-mail em janela fixa de 15 minutos, incluindo sucesso e sem zerar no sucesso; limites adicionais por IP e global. Contadores compartilhados em `rate_limits` no MongoDB em produção; SQLite persistente somente em desenvolvimento/testes sem URI, nunca memória por worker ou fallback em produção. Resposta 429 com Retry-After; falha do armazenamento retorna 503. Mensagem de credenciais inválidas não distingue usuário inexistente de senha incorreta. Orçamentos completos em [segurança](seguranca.md).
 
 ### Renovação e persistência
 
@@ -82,7 +82,7 @@ Tela de dispositivos conectados, encerramento remoto de outras sessões, Google/
 
 Para o piloto, arquivos em `instance/uploads` localmente e volume persistente dedicado na EC2. Nunca no diretório público do React, no Git ou como binário no MongoDB.
 
-- Um arquivo por requisição; limite do arquivo **50 MiB** (52.428.800 bytes). Limite total multipart **51 MiB** (53.477.376 bytes), consistente no proxy e no Flask.
+- Um arquivo por requisição; limite do arquivo **50 MiB** (52.428.800 bytes). Limite total multipart **51 MiB** (53.477.376 bytes), a habilitar somente na rota de upload, consistentemente no proxy e Flask. As rotas atuais têm limite de 16 KiB; a implantação do upload deve definir essa exceção sem ampliar autenticação/perfil.
 - MP4 real com vídeo H.264, áudio AAC opcional e duração maior que zero e até 90 segundos. Nenhuma transcodificação nesta entrega.
 - Validar nome/formato declarado, tamanho real e metadados com `ffprobe`; não aceitar só extensão/MIME. Não extrair arquivos, usar shell para nomes enviados ou aceitar caminhos fornecidos pelo cliente. `ffprobe` com timeout de 10 segundos e saída limitada; ausência da ferramenta gera indisponibilidade controlada (503), sem aceitar arquivo sem validação.
 - Escrever progressivamente em área temporária, validar e mover com nome UUID gerado pelo servidor; limpar temporários em falha. Metadados incluem duração, codecs, bytes e localização privada. Não expor caminho de disco.
@@ -109,6 +109,14 @@ Consulta bíblica implementada pelo Flask com bible-api.com, tradução Almeida,
 Sem cache válido e com falha externa: 503; resposta inválida do provedor: 502; passagem inexistente: 404. Reprodução de vídeo não depende da consulta bíblica. Não marcar RA07 concluído com resposta simulada.
 
 Nginx + Gunicorn + build React na mesma EC2, HTTPS em produção, uploads persistentes fora do diretório de código. A configuração e a URL serão criadas/verificadas em T03/T12. Não criar recursos pagos nem inferir acesso AWS nesta tarefa.
+
+### Controles de segurança implementados após auditoria
+
+Consultar [segurança](seguranca.md) e [auditoria](auditoria-seguranca-2026-10-24.md). A factory exige origem HTTPS e transporte MongoDB seguro em produção, restringe Host ao domínio configurado e aceita X-Forwarded-For/Proto de um único proxy somente se o endereço de conexão estiver na lista `TRUSTED_PROXY_IPS`. Nginx sobrescreve esses cabeçalhos; Gunicorn permanece em loopback. O modelo inclui limites de taxa, conexões e cabeçalhos de proteção, ainda dependentes de verificação no servidor.
+
+Repositórios rejeitam seletores não escalares e atualizações de perfil fora dos campos permitidos. A aplicação web utiliza credencial restrita por coleção/ação; em produção, inicialização de índices exige `MONGODB_SETUP_URI` separada, fornecida somente ao processo operacional. O código não configura esses papéis no Atlas e não comprova backup/restauração. Esses itens são condições operacionais a verificar antes de exposição pública.
+
+Instalar pip pelo bootstrap fixado com SHA-256 antes das demais dependências; certifi foi atualizado para 2026.10.19. A correção local não atualiza automaticamente computadores de colegas, imagens ou EC2. Estes controles não implementam a política planejada de sessões persistentes.
 
 ## Fontes técnicas consultadas em 19/10/2026
 

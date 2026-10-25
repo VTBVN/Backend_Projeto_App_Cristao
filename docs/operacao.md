@@ -4,7 +4,7 @@
 
 Implementados `GET /api/health` e `GET /api/bible/passages`. Também implementados GET `/api/auth/csrf`, POST `/api/users`, POST `/api/auth/login`, POST `/api/auth/logout`, GET/PATCH `/api/me` e GET `/api/users/{id}`; React e prova no Atlas permanecem pendentes. Nenhum recurso AWS foi criado e não existe URL pública de API nesta entrega.
 
-**Planejamento revisado em 24/10/2026:** sessões comuns terão renovação controlada, janela de 30 dias e limite absoluto de 90 dias; administradores continuarão com 12 horas absolutas. Essa revisão ainda não está no código. As instruções executáveis abaixo usam a configuração atual. Ver [arquitetura](arquitetura.md) e [contrato API v0.5](api.md).
+**Planejamento revisado em 24/10/2026:** sessões comuns terão renovação controlada, janela de 30 dias e limite absoluto de 90 dias; administradores continuarão com 12 horas absolutas. Essa revisão ainda não está no código. As instruções executáveis abaixo usam a configuração atual, incluindo os controles de acesso do [contrato API v0.6](api.md). Ver [arquitetura](arquitetura.md).
 
 ## Preparar ambiente local
 
@@ -12,6 +12,7 @@ No diretório do backend, com Python 3.12:
 
 ```bash
 python3 -m venv .venv
+.venv/bin/python -m pip install --no-deps -r requirements-bootstrap.txt
 .venv/bin/python -m pip install -r requirements-dev.txt
 cp .env.example .env
 .venv/bin/flask --app app init-cache
@@ -19,6 +20,8 @@ cp .env.example .env
 ```
 
 `cp` é para a primeira configuração; preserve `.env` existente. Não é necessário preencher MongoDB para testar a T03 local. O Flask CLI lê `.env` via python-dotenv; o Gunicorn depende de variáveis exportadas ou fornecidas pelo serviço systemd.
+
+O bootstrap instala pip 26.2.2 por artefato fixado com SHA-256 antes das demais dependências; certifi está fixado em 2026.10.19. Aplicar também em imagens e servidor. Os [controles de segurança](seguranca.md) descrevem o incidente de certificados, os limites atuais e as condições pendentes para publicação.
 
 Em outro terminal:
 
@@ -48,12 +51,14 @@ Os testes são offline e não escrevem em banco real. A prova real é opt-in, us
 
 Tradução é restrita a `almeida`; não aceitar provedor/URL enviados na query. `APP_ORIGIN`, `SESSION_COOKIE_SECURE` e `ANONYMOUS_SESSION_TTL_SECONDS` são consumidos na autenticação. A sessão anônima tem duração absoluta fixa de 1800 segundos. `SESSION_TTL_SECONDS` já é consumida pelo login e deve permanecer em 43200 até implementar a revisão D004: outra duração é rejeitada na inicialização. `UPLOAD_*`, `FFPROBE_PATH` e `MAX_VIDEO_*` permanecem contratos futuros.
 
+`TRUSTED_PROXY_IPS` configura a confiança no proxy e é obrigatória em produção. `MONGODB_SETUP_URI` é lida somente nos comandos de inicialização em produção; não pertence ao ambiente do serviço web. Seus valores reais ficam fora do Git.
+
 ## Preparação para EC2 (sem provisionamento nesta tarefa)
 
 Arquivos disponíveis:
 
 - `deploy/app-cristao.service`: modelo systemd com usuário dedicado, ambiente externo e Gunicorn em loopback.
-- `deploy/nginx.conf.example`: modelo mesma origem com HTTPS, proxy `/api`, limite de 51 MiB e build React futuro. Não publica arquivos de upload.
+- `deploy/nginx.conf.example`: modelo mesma origem com HTTPS, proxy `/api`, limites de taxa/conexões e corpo padrão de 16 KiB. A futura rota de upload precisará de exceção explícita de 51 MiB no proxy e Flask. Não publica arquivos de upload.
 - `gunicorn.conf.py`: dois workers, timeout de 30 segundos e sem access log com parâmetros de consulta.
 
 Os modelos não foram instalados no sistema. Nginx/HTTPS e frontend ainda não estão disponíveis localmente para validação integral. Só ativar o serviço depois de adaptar e conferir os arquivos no servidor autorizado.
@@ -61,11 +66,11 @@ Os modelos não foram instalados no sistema. Nginx/HTTPS e frontend ainda não e
 ### Pré-requisitos no servidor já autorizado
 
 1. Instância EC2 acessível, Python 3.12, Nginx, usuário de serviço `appcristao`, domínio e certificado HTTPS. Abrir somente as portas necessárias; Gunicorn permanece em `127.0.0.1:8000`.
-2. Backend em `/srv/app-cristao/backend`; criar virtualenv e instalar `requirements.txt`. Executar testes em ambiente separado antes de publicar.
+2. Backend em `/srv/app-cristao/backend`; criar virtualenv, instalar `requirements-bootstrap.txt` com `--no-deps` e depois `requirements.txt`. Executar testes em ambiente separado antes de publicar.
 3. MongoDB Atlas com usuário restrito ao banco do projeto e acesso de rede autorizado para a EC2. Não desabilitar TLS para resolver falhas de conexão.
 4. Criar `/var/lib/app-cristao` pertencente ao usuário do serviço, para uploads futuros. Código permanece separado dos dados persistentes.
-5. Guardar ambiente em `/etc/app-cristao/backend.env`, legível apenas por root/serviço conforme a configuração operacional. Não usar exemplo como credencial real. Configurar `APP_ENV=production`, `MONGODB_URI` real e banco dedicado. `APP_ORIGIN=https://seu-dominio` e `SESSION_COOKIE_SECURE=true`.
-6. Antes de ativar o serviço, carregar o ambiente de modo seguro na sessão operacional e executar `flask --app app init-cache` com o usuário adequado. Não copiar URI em logs, comandos compartilhados ou commits.
+5. Guardar ambiente em `/etc/app-cristao/backend.env`, legível apenas por root/serviço conforme a configuração operacional. Não usar exemplo como credencial real. Configurar `APP_ENV=production`, `MONGODB_URI` runtime restrita e banco dedicado; `mongodb://` exige TLS explícito e `mongodb+srv://` não pode desativá-lo. `APP_ORIGIN=https://seu-dominio`, `SESSION_COOKIE_SECURE=true` e `TRUSTED_PROXY_IPS=127.0.0.1,::1` para o Nginx local. Não disponibilizar a credencial de inicialização ao serviço web.
+6. Antes de ativar o serviço, carregar ambiente operacional restrito com `MONGODB_SETUP_URI` separada e TLS; executar `flask --app app init-auth` e `flask --app app init-cache`. Retirar o segredo desse contexto após os comandos. Em produção, sua ausência impede inicialização de índices com a credencial runtime. Não copiar URI em logs, comandos compartilhados ou commits.
 7. Adaptar domínio/certificados no exemplo Nginx; publicar build React somente quando existir. Validar com `nginx -t` e `systemd-analyze verify` no servidor, após os caminhos estarem instalados. O redirecionamento HTTP exige certificado previamente provisionado; este modelo não automatiza sua emissão.
 8. Instalar unidade, recarregar systemd e iniciar somente após validação. Verificar health, uma passagem real e a segunda consulta em cache. Confirmar a coleção no Atlas sem divulgar URI. Documentar URL pública no README.
 
@@ -87,13 +92,15 @@ Contas e sessões usam somente MongoDB; sem `MONGODB_URI`, as novas rotas retorn
 .venv/bin/flask --app app init-auth
 ```
 
-O comando cria índices únicos de e-mail normalizado e hash de sessão, TTL de sessões e índices da coleção `login_attempts` (contador de falhas de login, com TTL); conflitos/dados existentes ou banco inacessível causam falha controlada. Preserve os índices únicos para garantir duplicação inclusive em concorrência.
+O comando cria índices únicos de e-mail normalizado e hash de sessão, TTL de sessões e do novo limitador `rate_limits`, além de índices legados de `login_attempts`. A coleção legada não limita mais novos logins; preservar sua limpeza TTL sem migrar falhas antigas para os novos orçamentos. Conflitos/dados existentes ou banco inacessível causam falha controlada. Preserve os índices únicos para garantir duplicação inclusive em concorrência. Em produção, fornecer `MONGODB_SETUP_URI` apenas ao processo operacional conforme os pré-requisitos acima.
 
 Fluxo: GET `/api/auth/csrf` → guardar cookie e `data.csrf_token` → POST `/api/users` com JSON `name`, `email`, `password` e cabeçalho `X-CSRF-Token`. Cadastro retorna 201, sem autenticar a sessão. Uma nova consulta CSRF rotaciona o token e preserva o prazo absoluto da sessão existente. Sessões armazenam somente hashes dos tokens; senhas usam scrypt.
 
 `APP_ORIGIN` é a origem exata do cliente, sem caminho ou barra final. Requisições com Origin divergente são recusadas nas duas rotas; clientes sem Origin ainda precisam de cookie e CSRF no cadastro. Cookies são Secure por padrão; `SESSION_COOKIE_SECURE=false` só é aceito em testes ou `APP_ENV=development` com origem localhost HTTP. Desenvolvimento com Vite deve encaminhar `/api` ao Flask na mesma origem; não há CORS público.
 
 Testes usam repositório fake injetado e adaptador Mongo simulado, sem rede ou dados reais. Não comprovam persistência no Atlas, concorrência real no banco ou integração React. Sessão autenticada dura 12 horas (`SESSION_TTL_SECONDS=43200`, valor fixo validado na inicialização).
+
+Os limites de acesso são compartilhados: MongoDB em produção e SQLite persistente somente no desenvolvimento/teste sem URI. Há orçamentos por IP, global, cadastro, CSRF e login IP/e-mail, reservados atomicamente antes do trabalho caro. Sucesso não zera o contador. Ver tabela e semântica de janela fixa no [guia de segurança](seguranca.md). Limites 429 da aplicação têm Retry-After; falha do armazenamento gera 503. Health não comprova que os contadores ou índices estejam prontos.
 
 ## Transição planejada para sessões persistentes — D004
 

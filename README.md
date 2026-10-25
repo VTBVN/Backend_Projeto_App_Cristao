@@ -9,6 +9,7 @@ Requer Python 3.12. No diretório deste repositório:
 
 ```bash
 python3 -m venv .venv
+.venv/bin/python -m pip install --no-deps -r requirements-bootstrap.txt
 .venv/bin/python -m pip install -r requirements-dev.txt
 .venv/bin/flask --app app run --host 127.0.0.1 --port 5000
 ```
@@ -28,6 +29,7 @@ Sem URI MongoDB, o desenvolvimento usa cache SQLite em `instance/`, ignorado pel
 
 - [Arquitetura](docs/arquitetura.md) e [contrato da API](docs/api.md): decisões e estado das rotas.
 - [Execução e preparação de EC2](docs/operacao.md).
+- [Controles de segurança e preparação para publicação](docs/seguranca.md): limites, proxy confiável, TLS, credenciais e recuperação de dados.
 
 - [Documento de Escopo e Requisitos do Projeto](docs/escopo-e-requisitos.md): visão do produto, análise de lacunas, arquitetura proposta, funcionalidades, prioridades, cronograma e critérios de aceite.
 - [Requisitos oficiais do Projeto 3](https://insper.github.io/ProgramacaoEficaz/projetos/projeto3/).

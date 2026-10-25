@@ -1,6 +1,6 @@
 # Documento de Escopo e Requisitos do Projeto
 
-**Versão:** 1.2
+**Versão:** 1.3
 
 **Data:** 24/10/2026
 **Status:** proposta de referência para validação pelo grupo e pelo professor  
@@ -219,6 +219,7 @@ Usar respostas coerentes, incluindo `201` para criação, `400` para entrada inv
 
 ## 10. Requisitos de qualidade e verificação
 
+- Aplicar os [controles de segurança](seguranca.md): consultas com campos/tipos permitidos, limites atômicos compartilhados, corpo reduzido fora de upload, proxy confiável e validação de TLS em produção. Separar credencial runtime da inicialização de índices e verificar permissões, rede e recuperação no Atlas antes de exposição pública. Esses controles refinam a qualidade do MVP, sem acrescentar funcionalidades.
 - Validar permissões no Flask; esconder botões no React não é controle de acesso.
 - Definir a estratégia de sessão/token e sua expiração antes de implementar autenticação.
 - Proteger credenciais com variáveis de ambiente; manter `.env.example` sem valores reais e ignorar arquivos reais no Git.
