@@ -1,8 +1,8 @@
 # Documento de Escopo e Requisitos do Projeto
 
-**Versão:** 1.1
+**Versão:** 1.2
 
-**Data:** 19/10/2026  
+**Data:** 24/10/2026
 **Status:** proposta de referência para validação pelo grupo e pelo professor  
 **Meta acadêmica:** atender aos critérios de A+, sujeito à avaliação docente.
 
@@ -158,7 +158,9 @@ Para o piloto acadêmico, os MP4 podem ficar em diretório persistente na EC2, c
 
 O limite de duração é de até 90 segundos e só deve ser apresentado como garantido após implementação de validação real. Usar vídeos previamente preparados na demonstração, respeitando os limites técnicos abaixo.
 
-**Refinamento técnico T01 (v1.1):** adotados arquivo de até 50 MiB, requisição de até 51 MiB e duração de até 90 segundos, com validação ffprobe e armazenamento privado persistente na EC2. Esses controles ainda serão implementados. A estratégia de autenticação é sessão opaca no MongoDB, expiração absoluta de 12 horas, revogação no logout e CSRF nas operações mutáveis. Detalhes e justificativas em [arquitetura](arquitetura.md).
+**Refinamento técnico T01 e revisão D004 (v1.2):** adotados arquivo de até 50 MiB, requisição de até 51 MiB e duração de até 90 segundos, com validação ffprobe e armazenamento privado persistente na EC2. Esses controles de mídia ainda serão implementados. Para RF01, planejar sessão opaca persistente no MongoDB: usuários comuns com 30 dias desde a última renovação válida, limitados a 90 dias desde o login; administradores com 12 horas absolutas, sem extensão automática. Preservar revogação no logout, CSRF e recuperação da identidade pelo React ao reabrir o site. São parâmetros iniciais do piloto, não exigências acadêmicas. O código atual ainda aplica 12 horas a todas as sessões autenticadas; a nova política permanece pendente de implementação e integração. Detalhes e justificativas em [arquitetura](arquitetura.md).
+
+A revisão refina RF01 sem acrescentar login Google/Apple, tela de dispositivos, encerramento remoto de outras sessões, MFA, passkeys, confirmação adicional específica para moderação ou detecção comportamental ao MVP. Suporte a 5.000 usuários simultâneos não é critério de aceite desta entrega.
 
 ### Integração bíblica
 

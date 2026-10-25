@@ -1,6 +1,6 @@
-# Contrato da API — v0.4
+# Contrato da API — v0.5
 
-**Data:** 24/10/2026. **Estado:** `/api/health` e `/api/bible/passages` implementadas e verificadas na T03. Autenticação implementada com verificação local isolada: GET `/api/auth/csrf`, POST `/api/users`, POST `/api/auth/login`, POST `/api/auth/logout`, GET/PATCH `/api/me` e GET `/api/users/{id}`; integração Atlas e React pendentes. As demais rotas são contratos para tarefas futuras. Referência: [arquitetura](arquitetura.md) e RF01–RF13 do [escopo](escopo-e-requisitos.md).
+**Data:** 24/10/2026. **Estado:** `/api/health` e `/api/bible/passages` implementadas e verificadas na T03. Autenticação implementada com verificação local isolada: GET `/api/auth/csrf`, POST `/api/users`, POST `/api/auth/login`, POST `/api/auth/logout`, GET/PATCH `/api/me` e GET `/api/users/{id}`; integração Atlas e React pendentes. O código mantém sessões autenticadas de 12 horas. A política persistente e a rota de renovação desta versão são planejadas, ainda não implementadas. As demais rotas são contratos para tarefas futuras. Referência: [arquitetura](arquitetura.md) e RF01–RF13 do [escopo](escopo-e-requisitos.md).
 
 ## Convenções
 
@@ -42,9 +42,9 @@ Coleções internas não definem diretamente o JSON público. Autor e administra
 
 Validações: nome 2–80 caracteres após trim; bio até 300; e-mail obrigatório, até 254 caracteres, normalizado com trim/lowercase e índice único; senha entre 12 e 128 caracteres, sem trim ou truncamento. Senha deve ser tratada como string; e-mail não aceita objetos ou operadores de consulta. E-mail duplicado: 409. Cadastro não aceita `role`; falha de login retorna mensagem genérica e 401. Editar e-mail/senha não faz parte deste contrato.
 
-Fluxo React: obter CSRF → cadastrar → fazer login → atualizar token em memória → GET `/me`. Ao reabrir a página, obter CSRF e consultar `/me`. Logout limpa estado React após resposta; erro de rede não comprova revogação, portanto informar falha e permitir tentar novamente. Não guardar senha nem identificador de sessão no localStorage.
+Fluxo React planejado: obter CSRF → cadastrar → fazer login → atualizar token em memória → GET `/me`. Ao reabrir a página, consultar `/me` com o cookie preservado antes de mostrar login; 200 recupera a identidade, 401 indica ausência de sessão válida e erro de rede/503 apresenta indisponibilidade com nova tentativa. Obter CSRF para alterações e renovação, coordenando as chamadas entre abas. Logout limpa estado React após resposta; erro de rede não comprova revogação, portanto informar falha e permitir tentar novamente. Não guardar senha nem identificador de sessão no localStorage.
 
-### Estado da fatia de autenticação
+### Estado implementado da autenticação
 
 GET `/auth/csrf`, POST `/users`, POST `/auth/login`, POST `/auth/logout`, GET/PATCH `/me` e GET `/users/{id}` estão implementadas. Cada GET CSRF válido emite um novo token, invalidando o anterior, sem estender a expiração absoluta da sessão anônima de 30 minutos. Outra aba que mantenha token antigo precisará consultar CSRF novamente. Origem divergente de `APP_ORIGIN` é rejeitada nas duas rotas; cliente sem Origin ainda precisa do cookie e token no cadastro. Cadastro não adiciona identidade autenticada à sessão.
 
@@ -53,6 +53,30 @@ Contas e sessões exigem MongoDB e inicialização dos índices por `init-auth`,
 Logout exige sessão autenticada e CSRF; apaga a sessão no servidor e expira o cookie (204). Sem login: 401; sem CSRF: 403. `GET /me` não exige CSRF, lê o papel atual no servidor e retorna 401 para sessão ausente, expirada, revogada ou de usuário removido. `PATCH /me` aceita somente `name` (2–80) e/ou `bio` (até 300), com trim; qualquer outro campo, inclusive `email`, `role` e `password`, retorna 400. `GET /users/{id}` é público e retorna somente UserPublic; identificador malformado retorna 400 e inexistente 404.
 
 React e prova Atlas permanecem pendentes.
+
+### Revisão planejada de sessões persistentes — D004
+
+Esta seção substitui o planejamento de validade geral de 12 horas, sem alterar o comportamento implementado descrito acima. Preservar os corpos de login e os objetos UserSelf/UserPublic.
+
+| Sessão | Validade planejada |
+| --- | --- |
+| Anônima para CSRF | 30 minutos absolutos, sem extensão automática. |
+| Usuário comum | 30 dias desde a última renovação válida, com máximo de 90 dias desde o login. |
+| Administrador | 12 horas absolutas, sem renovação deslizante. |
+
+Os prazos são parâmetros iniciais do piloto. O servidor atribui a política e consulta o papel atual. Promoção para administrador exige novo login antes de autorizar moderação; retirada do papel impede novas ações administrativas.
+
+| Método e rota planejada | Entrada | Acesso | Sucesso |
+| --- | --- | --- | --- |
+| POST `/auth/session/renew` | Sem corpo | Autenticado + CSRF | 200, `data.expires_at` e `data.absolute_expires_at` em ISO 8601 UTC; cookie atualizado quando necessário |
+
+A rota renova somente sessões comuns válidas no novo formato. Para sessão administrativa válida, retorna os prazos existentes, sem estendê-los. Sessões antigas de 12 horas mantêm seu vencimento original até novo login; não ampliar seu prazo silenciosamente. Sessão ausente, expirada, revogada ou vinculada a usuário removido não pode ser renovada. Aplicam-se 401 para falta de autenticação, 403 para falha de CSRF/origem e 503 para persistência indisponível; como nas rotas atuais, uma falha de CSRF pode ser detectada antes da falta de autenticação.
+
+Atualizar atomicamente apenas registro existente e válido, sem upsert; logout concorrente não pode ser desfeito por renovação atrasada. `expires_at` nunca ultrapassa `absolute_expires_at`. Emitir cookie coerente com o banco somente após confirmação da persistência. Manter `Cache-Control: no-store`; não devolver identificadores secretos nem hashes internos.
+
+O React solicita renovação no retorno e durante uso ativo, consolidando chamadas. Definir intervalo e tolerância de consolidação antes da implementação, conforme arquitetura. Tratar múltiplas abas, rotação de CSRF e respostas fora de ordem; não repetir mutações automaticamente após falha de rede de resultado desconhecido.
+
+Tela de dispositivos, encerramento remoto de outras sessões, OAuth, MFA, passkeys e confirmação adicional específica para moderação não fazem parte desta revisão do MVP. A proteção administrativa inicial utiliza o login existente com prazo menor.
 
 ## 2. Feed, publicação e mídia — RF02–RF05
 
@@ -126,4 +150,4 @@ GET `/health`, público: 200 com `data.status=ok` e sem segredos quando o proces
 
 ## Entrega da primeira fatia (T04)
 
-Implementar primeiro CSRF, cadastro, login, logout, GET/PATCH `/me` e GET `/users/{id}`, com formulário React e estados de erro. Testar revogação e expiração, CSRF, duplicação de e-mail, rejeição de `role` e ausência de dados sensíveis. Banco fake só valida comportamento local; Atlas e navegador conectado ao Flask precisam de evidências separadas para CA01/CA07.
+Concluir a integração de CSRF, cadastro, login, logout, GET/PATCH `/me` e GET `/users/{id}` com formulário React e estados de erro. Implementar a revisão de sessões/renovação e testar retorno entre visitas, revogação, limites de validade, concorrência entre abas e logout, CSRF, duplicação de e-mail, rejeição de `role` e ausência de dados sensíveis. Cada rota nova deve ter consumo correspondente no React. Banco fake só valida comportamento local; Atlas e navegador conectado ao Flask precisam de evidências separadas para CA01/CA07.

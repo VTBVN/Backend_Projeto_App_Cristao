@@ -1,6 +1,6 @@
 # Arquitetura e decisões técnicas — T01
 
-**Data:** 22/10/2026. **Estado:** base Flask, consulta bíblica e cache implementados na T03; sessão anônima/CSRF e cadastro implementados com testes locais isolados. Login/logout, sessão autenticada, mídia, frontend e verificação Atlas continuam pendentes. Veja [operação](operacao.md) para execução e verificação.
+**Atualização:** 24/10/2026. **Estado:** base Flask, consulta bíblica e cache implementados na T03; sessão anônima/CSRF e cadastro possuem evidências anteriores de testes locais isolados. Login/logout, sessão autenticada de 12 horas e consulta/edição de perfil existem no código; sua presença não comprova integração completa. A revisão D004 abaixo define o comportamento planejado para sessões persistentes e ainda não está implementada. Mídia, frontend, integração Atlas e implantação completa continuam pendentes de verificação. Veja [operação](operacao.md) para execução e evidências disponíveis.
 
 ## Stack e organização
 
@@ -15,19 +15,68 @@ Estrutura backend criada na T03: `app/`, `tests/`, dependências, `wsgi.py` e co
 
 ## Autenticação e permissões — D004
 
-Escolher sessão opaca persistida no MongoDB, em vez de JWT no localStorage ou de usar apenas cookie Flask com identidade assinada. A escolha permite revogação imediata no logout e mantém o identificador inacessível ao JavaScript.
+**Revisão de planejamento em 24/10/2026:** substituir o vencimento obrigatório de 12 horas para usuários comuns por continuidade entre visitas, mantendo uma política mais restritiva para administradores. O código atual ainda exige `SESSION_TTL_SECONDS=43200` para todas as sessões autenticadas. Os prazos desta seção são decisões iniciais do piloto, configuráveis e sujeitos a avaliação; não são exigências acadêmicas nem valores ótimos comprovados pela pesquisa de mercado.
+
+Preservar sessão opaca persistida no MongoDB. A escolha permite revogação no servidor e mantém o identificador inacessível ao JavaScript por meio de cookie HttpOnly. Fechar uma aba ou o navegador não deve encerrar a sessão quando o cookie persistente for preservado. O benefício esperado é reduzir o atrito no retorno; aumento de retenção ainda depende de validação com usuários.
+
+### Política de validade planejada
+
+| Tipo de sessão | Validade | Renovação e justificativa |
+| --- | --- | --- |
+| Anônima, usada para CSRF | 30 minutos absolutos | Sem extensão automática; preservar o comportamento atual. |
+| Usuário comum | 30 dias desde a última renovação válida, limitados a 90 dias desde o login | Renovação automática controlada durante uso. Acomoda retornos diários e semanais, encerra autorizações abandonadas e mantém um limite máximo. |
+| Administrador | 12 horas absolutas desde o login | Sem renovação deslizante. Preserva uma janela menor para contas com poder de moderação, utilizando o fluxo de login existente. Prazo provisório do projeto. |
+
+Uma sessão comum pode ser renovada sem pedir senha, mas nunca ultrapassa o limite absoluto nem pode ser renovada após vencer. Ao ultrapassar qualquer limite aplicável, é necessário novo login. A janela maior aumenta a exposição potencial de uma credencial roubada; não dispensa proteção do cookie, autorização no servidor e revogação.
+
+O papel atual continua sendo consultado no servidor. Promover uma conta de usuário para administrador não transforma sua sessão longa em autorização administrativa: exigir novo login para estabelecer a política de administrador. A retirada do papel administrativo deve impedir novas ações de moderação mesmo que a sessão ainda seja válida.
+
+### Proteções preservadas
 
 - Gerar identificador aleatório criptográfico de pelo menos 256 bits; armazenar somente seu SHA-256 na coleção `sessions`. Não usar o cookie de sessão padrão do Flask como substituto silencioso desta decisão.
-- Cookie `app_session`: HttpOnly, SameSite=Lax, Path=/, sem Domain; Secure em produção HTTPS. A única exceção de Secure é o desenvolvimento explícito em localhost HTTP.
-- Sessão anônima para CSRF: 30 minutos. Sessão autenticada: 12 horas de duração absoluta, sem renovação deslizante. Validar `expires_at` a cada acesso; TTL só faz limpeza, não autorização.
+- Cookie `app_session`: HttpOnly, SameSite=Lax, Path=/, sem Domain; Secure em produção HTTPS. Usar Max-Age coerente com a validade efetiva no servidor. A única exceção de Secure é o desenvolvimento explícito em localhost HTTP.
+- Validar `expires_at` e o limite absoluto aplicável em cada acesso; TTL só faz limpeza, não autorização. Sessão persistente é um registro de autorização, não uma conexão HTTP ou processo reservado por usuário.
 - `GET /api/auth/csrf` cria/reutiliza sessão e retorna token CSRF; resposta sem cache. Guardar no servidor o hash do token e comparar em tempo constante. React mantém token em memória, envia `X-CSRF-Token` e cookies nas requisições mutáveis.
-- Todas as operações POST/PUT/PATCH/DELETE, inclusive cadastro/login/logout, exigem CSRF. Validar Origin nas requisições do navegador contra origem configurada, rejeitar origem divergente e nunca retornar token via CORS público. Cliente sem Origin continua obrigado a apresentar cookie e token CSRF válido.
-- Cadastro não autentica automaticamente. Login invalida sessão anterior, gera outra e retorna novo CSRF. Logout exclui a sessão no servidor e expira o cookie. Sessão revogada ou expirada retorna 401, inclusive se o cliente reutilizar cookie antigo.
+- Todas as operações POST/PUT/PATCH/DELETE, inclusive cadastro/login/logout e renovação, exigem CSRF. Validar Origin nas requisições do navegador contra origem configurada, rejeitar origem divergente e nunca retornar token via CORS público. Cliente sem Origin continua obrigado a apresentar cookie e token CSRF válido.
+- Cadastro não autentica automaticamente. Login invalida a sessão anterior daquele navegador, gera outra e retorna novo CSRF. Logout exclui a sessão no servidor e expira o cookie. Sessão revogada ou expirada retorna 401 em rotas autenticadas, inclusive se o cliente reutilizar cookie antigo; falha de CSRF continua retornando 403. A revogação impede novas requisições autenticadas, sem desfazer operações já autorizadas.
 - Hash de senha com `generate_password_hash` do Werkzeug, usando scrypt, e verificação pela função correspondente; senha nunca é registrada em log ou devolvida.
 - Papel padrão `user`; `admin` só por comando operacional autenticado no ambiente do servidor, fora do cadastro público. Ler papel atual do usuário no servidor, não confiar em campos do cliente.
 - Limitar tentativas de login: inicialmente 10 por combinação IP/e-mail em 15 minutos; resposta 429 e Retry-After. Implementar contador compartilhado entre workers, não apenas memória de processo. Mensagem de falha não distingue usuário inexistente de senha incorreta.
 
-Coleção adicional `sessions`: `token_hash` único, `user_id` opcional, `csrf_hash`, `created_at`, `expires_at` BSON Date UTC. Índice TTL `expires_at` com `expireAfterSeconds=0`. Limpeza de contadores de tentativas também pode usar TTL.
+### Renovação e persistência
+
+Preservar a coleção `sessions`: `token_hash` único, `user_id` opcional, `csrf_hash`, `created_at` e `expires_at`. Para a nova política, acrescentar `policy` (anônima, usuário ou administrador), `last_renewed_at` e `absolute_expires_at`, com datas BSON UTC. A política é atribuída pelo servidor. `created_at` representa o início da sessão após login e não é reiniciado por renovação.
+
+Para usuários comuns, `expires_at` é o menor valor entre `last_renewed_at + 30 dias` e `absolute_expires_at`, inicialmente `created_at + 90 dias`. Para administradores, expiração efetiva e absoluta coincidem em `created_at + 12 horas`. Preservar o índice TTL de `expires_at` com `expireAfterSeconds=0`; a limpeza de contadores de tentativas também pode usar TTL.
+
+- Prever `POST /api/auth/session/renew`, consumido pelo cliente HTTP central do React, com sessão autenticada válida, CSRF e verificação da política. Sessões administrativas não recebem extensão de prazo.
+- Renovar no retorno e durante uso ativo, consolidando chamadas para evitar gravação a cada requisição. Não manter uma aba abandonada conectada por chamadas periódicas sem finalidade de uso. O intervalo de consolidação e sua tolerância sobre a janela de inatividade devem ser definidos no contrato antes da implementação.
+- Atualizar o registro de forma condicional e atômica, verificando que a sessão ainda existe e não venceu. Não utilizar upsert para renovar. Logout e requisições atrasadas de renovação não podem recriar uma autorização removida.
+- Emitir o cookie atualizado somente após confirmar a persistência, com validade limitada à do registro. Tratar concorrência entre abas e respostas fora de ordem sem estender o limite absoluto. Um cookie remanescente nunca autoriza acesso se o registro já tiver sido removido.
+- Não ampliar silenciosamente sessões antigas de 12 horas: elas mantêm sua validade original, sem renovação pela nova política. O próximo login cria o registro no formato novo.
+- Na implementação, alinhar configuração, `api.md`, `operacao.md`, escopo e exemplos de ambiente com esta revisão. Nesta atualização documental, esses arquivos e o código ainda descrevem ou executam a política anterior.
+
+### Recuperação da conta no React
+
+Ao iniciar, o React consulta `GET /api/me` com o cookie existente e mantém um estado de verificação antes de decidir sobre a tela de login. Resposta 200 recupera a identidade e permite solicitar renovação quando aplicável; 401 indica ausência de sessão válida. Erro de rede ou 503 apresenta indisponibilidade com tentativa de recuperação, sem ser tratado como logout. O feed público continua acessível conforme suas regras.
+
+O cliente HTTP central coordena obtenção de CSRF e renovação. Abrir outra aba não deve causar falhas recorrentes por invalidação de tokens compartilhados. A implementação atual troca o token a cada GET CSRF; definir e testar o comportamento entre abas antes de integrar a renovação. Não repetir automaticamente mutações sem saber se a tentativa anterior foi executada.
+
+### Critérios de aceite da revisão
+
+- Fechar e reabrir o navegador com cookie preservado recupera a conta; retornos após 20 segundos, dois minutos, um dia e sete dias não pedem senha para sessão comum elegível.
+- Sessões comuns vencem por inatividade ou limite absoluto; renovação não altera a data de início. Sessões administrativas vencem após 12 horas, mesmo com atividade.
+- Cookie antigo e documento ainda não removido pelo TTL não autorizam sessão expirada. Sessões antigas de 12 horas não recebem extensão silenciosa.
+- Logout torna o cookie antigo inválido no servidor; renovação concorrente, repetida ou atrasada não ressuscita a sessão.
+- Múltiplas abas funcionam com recuperação controlada de CSRF. Falhas de rede e indisponibilidade de banco não são apresentadas como credenciais incorretas.
+- Papéis e propriedade são verificados no backend, incluindo promoção/rebaixamento de administrador; uma sessão comum não ganha acesso administrativo sem novo login.
+- Testes de rotas cobrem validade, renovação, logout e concorrência. Verificar também o fluxo real React–Flask–Atlas e a persistência após reabrir o navegador; testes isolados não substituem essa evidência.
+
+### Limite desta entrega
+
+A revisão refina RF01 e preserva Flask, React, Atlas, consumo da API bíblica no backend e deploy na EC2. O [enunciado do Projeto 3](https://insper.github.io/ProgramacaoEficaz/projetos/projeto3/) exige autenticação nas duas camadas para o conceito A, mas não determina JWT, OAuth ou prazo de sessão.
+
+Tela de dispositivos conectados, encerramento remoto de outras sessões, Google/Apple, MFA, passkeys, confirmação adicional específica para moderação e detecção comportamental ficam para evolução posterior. Capacidade para 5.000 usuários simultâneos também não integra o aceite acadêmico: depende de dimensionamento e testes próprios, não desta política de sessão. Priorizar os fluxos do MVP, testes e implantação completa.
 
 ## Upload e entrega de mídia — D005
 

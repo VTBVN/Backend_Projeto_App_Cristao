@@ -4,6 +4,8 @@
 
 Implementados `GET /api/health` e `GET /api/bible/passages`. Também implementados GET `/api/auth/csrf`, POST `/api/users`, POST `/api/auth/login`, POST `/api/auth/logout`, GET/PATCH `/api/me` e GET `/api/users/{id}`; React e prova no Atlas permanecem pendentes. Nenhum recurso AWS foi criado e não existe URL pública de API nesta entrega.
 
+**Planejamento revisado em 24/10/2026:** sessões comuns terão renovação controlada, janela de 30 dias e limite absoluto de 90 dias; administradores continuarão com 12 horas absolutas. Essa revisão ainda não está no código. As instruções executáveis abaixo usam a configuração atual. Ver [arquitetura](arquitetura.md) e [contrato API v0.5](api.md).
+
 ## Preparar ambiente local
 
 No diretório do backend, com Python 3.12:
@@ -44,7 +46,7 @@ Os testes são offline e não escrevem em banco real. A prova real é opt-in, us
 
 `APP_ENV`, `MONGODB_URI`, `MONGODB_DATABASE`, `BIBLE_API_BASE_URL` (fixa em `https://bible-api.com`), `BIBLE_CONNECT_TIMEOUT_SECONDS`, `BIBLE_READ_TIMEOUT_SECONDS`, `BIBLE_CACHE_TTL_SECONDS` e `MAX_REQUEST_BYTES` são lidas pela factory. Sem URI e fora de produção, o cache usa SQLite em `instance`.
 
-Tradução é restrita a `almeida`; não aceitar provedor/URL enviados na query. `APP_ORIGIN`, `SESSION_COOKIE_SECURE` e `ANONYMOUS_SESSION_TTL_SECONDS` são consumidos no cadastro. A sessão anônima tem duração absoluta fixa de 1800 segundos. `SESSION_TTL_SECONDS`, `UPLOAD_*`, `FFPROBE_PATH` e `MAX_VIDEO_*` permanecem contratos futuros.
+Tradução é restrita a `almeida`; não aceitar provedor/URL enviados na query. `APP_ORIGIN`, `SESSION_COOKIE_SECURE` e `ANONYMOUS_SESSION_TTL_SECONDS` são consumidos na autenticação. A sessão anônima tem duração absoluta fixa de 1800 segundos. `SESSION_TTL_SECONDS` já é consumida pelo login e deve permanecer em 43200 até implementar a revisão D004: outra duração é rejeitada na inicialização. `UPLOAD_*`, `FFPROBE_PATH` e `MAX_VIDEO_*` permanecem contratos futuros.
 
 ## Preparação para EC2 (sem provisionamento nesta tarefa)
 
@@ -92,3 +94,16 @@ Fluxo: GET `/api/auth/csrf` → guardar cookie e `data.csrf_token` → POST `/ap
 `APP_ORIGIN` é a origem exata do cliente, sem caminho ou barra final. Requisições com Origin divergente são recusadas nas duas rotas; clientes sem Origin ainda precisam de cookie e CSRF no cadastro. Cookies são Secure por padrão; `SESSION_COOKIE_SECURE=false` só é aceito em testes ou `APP_ENV=development` com origem localhost HTTP. Desenvolvimento com Vite deve encaminhar `/api` ao Flask na mesma origem; não há CORS público.
 
 Testes usam repositório fake injetado e adaptador Mongo simulado, sem rede ou dados reais. Não comprovam persistência no Atlas, concorrência real no banco ou integração React. Sessão autenticada dura 12 horas (`SESSION_TTL_SECONDS=43200`, valor fixo validado na inicialização).
+
+## Transição planejada para sessões persistentes — D004
+
+Implementar em conjunto política de sessão, persistência, renovação, configuração, testes e cliente React. A revisão documental não exige alterar `.env` ou `.env.example` agora. Os nomes e limites das novas configurações serão definidos na implementação; os prazos iniciais estão na arquitetura.
+
+- Preservar sessões antigas com a expiração original de 12 horas; não ampliar documentos existentes em lote. O próximo login cria a sessão no formato novo.
+- Acrescentar política atribuída pelo servidor, última renovação e limite absoluto em UTC. Calcular validade efetiva sem ultrapassar o limite absoluto; manter verificação por acesso e TTL somente para limpeza.
+- Renovação exige sessão válida, CSRF e atualização condicional atômica, sem recriar sessão excluída. Cookie atualizado somente após persistência confirmada.
+- Sessões comuns elegíveis devem sobreviver a fechar/reabrir o navegador e retornar em outro dia com cookie preservado. Administradores não recebem extensão automática; mudança de papel deve respeitar a nova política de permissões.
+- Validar múltiplas abas, obtenção de CSRF e renovação concorrente com logout. Falha de rede/503 deve permitir recuperação sem ser apresentada como credencial inválida.
+- Antes do aceite, executar testes isolados e verificar React–Flask–Atlas, cookie HTTPS, expiração e revogação no ambiente publicado. Registrar evidências próprias; esta documentação não comprova implantação ou capacidade para 5.000 usuários simultâneos.
+
+Gestão remota de dispositivos, OAuth, MFA, passkeys e confirmação adicional específica para moderação ficam para evolução posterior.
