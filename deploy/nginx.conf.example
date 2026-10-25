@@ -1,4 +1,9 @@
 # Substituir example.org e instalar certificado antes de habilitar.
+# Este arquivo deve ser incluído no contexto http do Nginx (ex.: conf.d).
+limit_req_zone $binary_remote_addr zone=api_per_ip:10m rate=5r/s;
+limit_req_zone $server_name zone=api_global:1m rate=30r/s;
+limit_conn_zone $binary_remote_addr zone=api_connections:10m;
+
 server {
     listen 80;
     server_name example.org;
@@ -10,11 +15,22 @@ server {
     server_name example.org;
     ssl_certificate /etc/letsencrypt/live/example.org/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/example.org/privkey.pem;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'" always;
     root /srv/app-cristao/frontend/dist;
     index index.html;
-    client_max_body_size 51m;
+    client_max_body_size 16k;
+    client_body_timeout 10s;
+    limit_req_status 429;
+    limit_conn_status 429;
 
     location /api/ {
+        limit_req zone=api_per_ip burst=20 nodelay;
+        limit_req zone=api_global burst=60 nodelay;
+        limit_conn api_connections 10;
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -28,4 +44,6 @@ server {
         try_files $uri $uri/ /index.html;
     }
     # Uploads nunca são servidos por alias público.
+    # Ao implementar upload, liberar 51m somente na rota exata e validada,
+    # com o limite correspondente no Flask; não ampliar autenticação/perfil.
 }

@@ -96,3 +96,21 @@ def test_login_attempt_queries(repository):
         {'key_hash': 'key', 'created_at': first, 'expires_at': since})
     repository.clear_failed_logins('key')
     repository.attempts.delete_many.assert_called_once_with({'key_hash': 'key'})
+
+
+@pytest.mark.parametrize('method,args', [
+    ('find_session', ({'$ne': None},)),
+    ('find_user_by_email', ({'$regex': '.*'},)),
+    ('find_user_by_id', ({'$ne': None},)),
+    ('delete_session', ({'$ne': None},)),
+    ('update_user', ('id', {'$set': {'role': 'admin'}})),
+    ('update_user', ('id', {'role': 'admin'})),
+    ('update_user', ('id', {'bio': {'$ne': None}})),
+])
+def test_repository_rejects_operator_injection_before_driver(repository, method, args):
+    with pytest.raises(ValueError):
+        getattr(repository, method)(*args)
+    repository.users.find_one.assert_not_called()
+    repository.users.find_one_and_update.assert_not_called()
+    repository.sessions.find_one.assert_not_called()
+    repository.sessions.delete_one.assert_not_called()

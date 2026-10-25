@@ -116,14 +116,14 @@ def test_login_rate_limit(setup):
     assert login(client).status_code == 200
 
 
-def test_successful_login_clears_failures(setup):
-    _, client, _, _ = setup
+def test_successful_login_does_not_reset_reserved_budget(setup):
+    _, client, _, clock = setup
     register(client)
     for _ in range(9):
         login(client, password='wrong-password-123')
     assert login(client).status_code == 200
-    for _ in range(9):
-        assert login(client, password='wrong-password-123').status_code == 401
+    assert login(client, password='wrong-password-123').status_code == 429
+    clock[0] += timedelta(minutes=15)
     assert login(client).status_code == 200
 
 

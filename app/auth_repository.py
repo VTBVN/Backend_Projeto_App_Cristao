@@ -1,10 +1,17 @@
 """Mongo persistence for accounts and opaque sessions; no local fallback."""
 from typing import Protocol
 
+from bson import ObjectId
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError, PyMongoError
 
 from app.errors import AuthUnavailable, EmailConflict
+
+
+def scalar_selector(value):
+    if not isinstance(value, (str, ObjectId)):
+        raise ValueError('Seletor deve ser escalar, sem operadores fornecidos pelo cliente.')
+    return value
 
 
 class AuthRepository(Protocol):
@@ -48,6 +55,7 @@ class MongoAuthRepository:
             raise AuthUnavailable() from None
 
     def find_session(self, token_hash):
+        scalar_selector(token_hash)
         try:
             return self.sessions.find_one({'token_hash': token_hash})
         except PyMongoError:
@@ -60,6 +68,7 @@ class MongoAuthRepository:
             raise AuthUnavailable() from None
 
     def rotate_csrf(self, token_hash, csrf_hash, now):
+        scalar_selector(token_hash)
         try:
             result = self.sessions.update_one(
                 {'token_hash': token_hash, 'expires_at': {'$gt': now}},
@@ -78,18 +87,24 @@ class MongoAuthRepository:
         return document
 
     def find_user_by_email(self, email):
+        scalar_selector(email)
         try:
             return self.users.find_one({'email_normalized': email})
         except PyMongoError:
             raise AuthUnavailable() from None
 
     def find_user_by_id(self, user_id):
+        scalar_selector(user_id)
         try:
             return self.users.find_one({'_id': user_id})
         except PyMongoError:
             raise AuthUnavailable() from None
 
     def update_user(self, user_id, fields):
+        scalar_selector(user_id)
+        if (not isinstance(fields, dict) or not fields or not set(fields) <= {'name', 'bio'}
+                or any(not isinstance(value, str) for value in fields.values())):
+            raise ValueError('Atualização de perfil aceita somente nome/bio textuais.')
         try:
             return self.users.find_one_and_update(
                 {'_id': user_id}, {'$set': fields}, return_document=ReturnDocument.AFTER)
@@ -97,12 +112,14 @@ class MongoAuthRepository:
             raise AuthUnavailable() from None
 
     def delete_session(self, token_hash):
+        scalar_selector(token_hash)
         try:
             self.sessions.delete_one({'token_hash': token_hash})
         except PyMongoError:
             raise AuthUnavailable() from None
 
     def failed_logins(self, key, since):
+        scalar_selector(key)
         try:
             cursor = self.attempts.find({'key_hash': key, 'created_at': {'$gt': since}})
             return [item['created_at'] for item in cursor.sort('created_at', 1)]
@@ -110,12 +127,14 @@ class MongoAuthRepository:
             raise AuthUnavailable() from None
 
     def record_failed_login(self, key, at, expires_at):
+        scalar_selector(key)
         try:
             self.attempts.insert_one({'key_hash': key, 'created_at': at, 'expires_at': expires_at})
         except PyMongoError:
             raise AuthUnavailable() from None
 
     def clear_failed_logins(self, key):
+        scalar_selector(key)
         try:
             self.attempts.delete_many({'key_hash': key})
         except PyMongoError:

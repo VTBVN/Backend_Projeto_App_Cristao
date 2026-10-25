@@ -4,6 +4,7 @@ from pathlib import Path
 import click
 from flask import Blueprint, Flask, jsonify, request
 from pymongo import MongoClient
+from pymongo.errors import PyMongoError
 from werkzeug.exceptions import HTTPException
 
 from app.bible import BibleService
@@ -11,6 +12,8 @@ from app.cache import MongoCache, SQLiteCache
 from app.errors import ApiError, CacheUnavailable, AuthUnavailable
 from app.auth import auth, configure_auth
 from app.auth_repository import MongoAuthRepository, UnavailableAuthRepository
+from app.security import (MongoRateLimits, SQLiteRateLimits, configure_security,
+                          protect_requests, validate_mongo_transport)
 
 
 def create_app(config=None):
@@ -23,6 +26,7 @@ def create_app(config=None):
         SESSION_TTL_SECONDS=int(os.getenv("SESSION_TTL_SECONDS", "43200")),
         MONGODB_URI=os.getenv("MONGODB_URI", ""),
         MONGODB_DATABASE=os.getenv("MONGODB_DATABASE", "app_cristao_dev"),
+        TRUSTED_PROXY_IPS=os.getenv("TRUSTED_PROXY_IPS", ""),
         BIBLE_API_BASE_URL=os.getenv("BIBLE_API_BASE_URL", "https://bible-api.com"),
         BIBLE_CONNECT_TIMEOUT_SECONDS=float(os.getenv("BIBLE_CONNECT_TIMEOUT_SECONDS", "2")),
         BIBLE_READ_TIMEOUT_SECONDS=float(os.getenv("BIBLE_READ_TIMEOUT_SECONDS", "5")),
@@ -40,6 +44,7 @@ def create_app(config=None):
     if app.config["APP_ENV"] not in ("development", "production", "testing"):
         raise ValueError("APP_ENV inválido.")
     configure_auth(app)
+    configure_security(app)
     mongo = None
     if app.config["MONGODB_URI"]:
         mongo = MongoClient(app.config["MONGODB_URI"], serverSelectionTimeoutMS=2000,
@@ -50,6 +55,10 @@ def create_app(config=None):
         repository = (MongoAuthRepository(mongo[app.config["MONGODB_DATABASE"]])
                       if mongo is not None else UnavailableAuthRepository())
     app.extensions["auth_repository"] = repository
+    app.extensions['rate_limits'] = app.config.get('RATE_LIMITS') or (
+        MongoRateLimits(mongo[app.config['MONGODB_DATABASE']]['rate_limits']) if mongo is not None
+        else SQLiteRateLimits(Path(app.config['CACHE_SQLITE_PATH']).with_name('rate-limits.sqlite3')))
+    app.before_request(protect_requests)
     app.register_blueprint(auth)
     cache = app.config.get("BIBLE_CACHE")
     if cache is None:
@@ -88,7 +97,7 @@ def create_app(config=None):
 
     @app.errorhandler(AuthUnavailable)
     def auth_unavailable(error):
-        return jsonify(error={"code": "auth_unavailable", "message": "Cadastro indisponível."}), 503
+        return jsonify(error={"code": "auth_unavailable", "message": "Serviço temporariamente indisponível."}), 503
 
     @app.errorhandler(HTTPException)
     def http_error(error):
@@ -106,14 +115,21 @@ def create_app(config=None):
     def headers(response):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Cache-Control"] = "no-store"
+        response.headers['X-Frame-Options'] = 'DENY'
+        response.headers['Content-Security-Policy'] = "default-src 'none'; frame-ancestors 'none'"
+        if app.config['APP_ENV'] == 'production':
+            response.headers['Strict-Transport-Security'] = 'max-age=31536000'
         return response
 
     @app.cli.command("init-cache")
     def init_cache():
         """Verify cache connectivity and initialize indexes explicitly."""
         try:
-            cache.initialize()
-        except CacheUnavailable:
+            if app.config['APP_ENV'] == 'production':
+                initialize_production('cache')
+            else:
+                cache.initialize()
+        except (CacheUnavailable, AuthUnavailable, ValueError, PyMongoError):
             raise click.ClickException("Cache indisponível; confira a configuração e a rede.") from None
         click.echo(f"Cache inicializado: {type(cache).__name__}.")
 
@@ -121,9 +137,26 @@ def create_app(config=None):
     def init_auth():
         """Initialize account and session indexes explicitly."""
         try:
-            repository.initialize()
-        except AuthUnavailable:
+            if app.config['APP_ENV'] == 'production':
+                initialize_production('auth')
+            else:
+                repository.initialize()
+                app.extensions['rate_limits'].initialize()
+        except (AuthUnavailable, ValueError, PyMongoError):
             raise click.ClickException("Autenticação indisponível; confira configuração e rede.") from None
         click.echo("Índices de usuários e sessões inicializados.")
+
+    def initialize_production(kind):
+        # The web process does not read or need this higher-privilege credential.
+        uri = os.getenv('MONGODB_SETUP_URI', '')
+        validate_mongo_transport(uri)
+        with MongoClient(uri, serverSelectionTimeoutMS=2000, connectTimeoutMS=2000,
+                         socketTimeoutMS=2000, tz_aware=True) as setup_client:
+            database = setup_client[app.config['MONGODB_DATABASE']]
+            if kind == 'auth':
+                MongoAuthRepository(database).initialize()
+                MongoRateLimits(database['rate_limits']).initialize()
+            else:
+                MongoCache(database['bible_cache']).initialize()
 
     return app

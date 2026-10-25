@@ -1,7 +1,6 @@
 """Anonymous CSRF sessions, registration, login/logout and own profile."""
 import hashlib
 import hmac
-import math
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -14,10 +13,9 @@ from werkzeug.exceptions import BadRequest
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from app.errors import ApiError, EmailConflict
+from app.security import consume_budget
 
 
-LOGIN_MAX_FAILURES = 10
-LOGIN_WINDOW = timedelta(minutes=15)
 ID_PATTERN = re.compile(r'[0-9a-f]{24}')
 
 
@@ -199,19 +197,15 @@ def login():
     email, password = payload['email'], payload['password']
     check_strings((email, password))
     email, at = email.strip().lower(), now()
-    key = digest(f'{request.remote_addr}|{email}')
-    failures = repository().failed_logins(key, at - LOGIN_WINDOW)
-    if len(failures) >= LOGIN_MAX_FAILURES:
-        wait = failures[-LOGIN_MAX_FAILURES] + LOGIN_WINDOW - at
-        raise ApiError(429, 'too_many_attempts', 'Muitas tentativas. Tente novamente mais tarde.',
-                       max(1, math.ceil(wait.total_seconds())))
-    user = repository().find_user_by_email(email) if len(email) <= 254 else None
-    password_ok = len(password) <= 128 and check_password_hash(
+    if len(email) > 254 or len(password) > 128:
+        raise ApiError(400, 'validation_error', 'Dados inválidos.')
+    # Reserve before hashing; successful requests also consume their reservation.
+    consume_budget('login-pair', f'{request.remote_addr}|{email}', 10, 900)
+    user = repository().find_user_by_email(email)
+    password_ok = check_password_hash(
         user['password_hash'] if user else dummy_hash(), password)
     if user is None or not password_ok:
-        repository().record_failed_login(key, at, at + LOGIN_WINDOW)
         raise ApiError(401, 'invalid_credentials', 'E-mail ou senha incorretos.')
-    repository().clear_failed_logins(key)
     ttl = current_app.config['SESSION_TTL_SECONDS']
     session_token, csrf_token = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     repository().delete_session(previous['token_hash'])
