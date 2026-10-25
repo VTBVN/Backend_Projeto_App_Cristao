@@ -14,5 +14,5 @@ dnspython==2.9.0
 charset-normalizer==3.5.2
 idna==3.20
 urllib3==2.8.0
-certifi==2026.10.18
+certifi==2026.10.19
 packaging==26.3
